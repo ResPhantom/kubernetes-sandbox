@@ -2,7 +2,7 @@
 # git repo: https://github.com/bitnami/charts/tree/main/bitnami/keycloak
 # helm artifact: https://artifacthub.io/packages/helm/bitnami/keycloak
 
-$(dirname $(readlink -f $0))/../install-lib.sh
+. $(dirname $(readlink -f $0))/../install-lib.sh
 
 helm upgrade --install keycloak oci://registry-1.docker.io/bitnamicharts/keycloak \
              --namespace keycloak \
