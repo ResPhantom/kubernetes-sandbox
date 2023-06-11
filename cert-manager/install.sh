@@ -69,8 +69,8 @@ ${VAULT_EXEC} -- vault write pki/root/generate/internal \
                 ttl=8760h
 
 ${VAULT_EXEC} -- vault write pki/config/urls \
-                issuing_certificates="http://${LOCAL_HOSTNAME}/v1/pki/ca" \
-                crl_distribution_points="http://${LOCAL_HOSTNAME}/v1/pki/crl"
+                issuing_certificates="http://${HOSTNAME}/v1/pki/ca" \
+                crl_distribution_points="http://${HOSTNAME}/v1/pki/crl"
 
 ${VAULT_EXEC} -- vault write pki/roles/vault \
                 allowed_domains=${DOMAIN} \
@@ -153,10 +153,31 @@ spec:
           key: token
 EOF
 
+<<<<<<< HEAD
 
 # TO DELETE
 
 # kubectl delete clusterissuer vault-issuer
+=======
+kubectl apply --filename -<<EOF
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: vault-cert
+  namespace: cert-manager
+spec:
+  secretName: vault.127.0.0.1.nip.io
+  issuerRef:
+    name: vault-issuer
+    kind: ClusterIssuer
+  commonName: vault.127.0.0.1.nip.io
+  dnsNames:
+  - vault.127.0.0.1.nip.io
+EOF
+
+# DELETE SETUP
+
+>>>>>>> 9c48d9dee763659de5be771936d3c5a4f283aa11
 # helm uninstall vault -n cert-manager
 # helm uninstall cert-manager -n cert-manager
 # kubectl delete pvc data-vault-0 -n cert-manager 
@@ -167,21 +188,3 @@ EOF
 # Look into using Vault as a kubernetes cert manager
 # https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-cert-manager
 # https://cert-manager.io/docs/configuration/vault/
-
-
-
-# kubectl apply --filename -<<EOF
-# apiVersion: cert-manager.io/v1
-# kind: Certificate
-# metadata:
-#   name: vault-cert
-#   namespace: cert-manager
-# spec:
-#   secretName: vault.127.0.0.1.nip.io
-#   issuerRef:
-#     name: vault-issuer
-#     kind: ClusterIssuer
-#   commonName: vault.127.0.0.1.nip.io
-#   dnsNames:
-#   - vault.127.0.0.1.nip.io
-# EOF
