@@ -1,25 +1,13 @@
-<<<<<<< HEAD
-- apiVersion: v1
-  kind: Namespace
-  metadata:
-    name: dummy-2048
-=======
 apiVersion: v1
 kind: Namespace
 metadata:
   name: game-2048
->>>>>>> 9c48d9dee763659de5be771936d3c5a4f283aa11
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-<<<<<<< HEAD
-  name: dummy-2048
-  namespace: dummy-2048
-=======
   name: game-2048
   namespace: game-2048
->>>>>>> 9c48d9dee763659de5be771936d3c5a4f283aa11
 spec:
   selector:
     matchLabels:
@@ -41,13 +29,8 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-<<<<<<< HEAD
-  name: dummy-2048
-  namespace: dummy-2048
-=======
   name: game-2048
   namespace: game-2048
->>>>>>> 9c48d9dee763659de5be771936d3c5a4f283aa11
   labels:
     app: servicelabel
 spec:
@@ -57,32 +40,6 @@ spec:
   selector:
     app: "2048"
 ---
-<<<<<<< HEAD
-apiVersion: v1
-items:
-- apiVersion: networking.k8s.io/v1
-  kind: Ingress
-  metadata:
-    name: dummy-2048
-    namespace: dummy-2048
-  spec:
-    ingressClassName: nginx
-    rules:
-    - host: game.127.0.0.1.nip.io
-      http:
-        paths:
-        - backend:
-            service:
-              name: vault
-              port:
-                number: 8200
-          path: /
-          pathType: Prefix
-    tls:
-    - hosts:
-      - game.127.0.0.1.nip.io
-      secretName: game.127.0.0.1.nip.io
-=======
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -107,4 +64,3 @@ spec:
   - hosts:
     - game.127.0.0.1.nip.io
     secretName: game.127.0.0.1.nip.io
->>>>>>> 9c48d9dee763659de5be771936d3c5a4f283aa11
