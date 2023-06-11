@@ -26,24 +26,33 @@ helm upgrade --install vault hashicorp/vault --namespace ${NAMESPACE} --create-n
              --set server.ingress.tls[0].hosts[0]=${HOSTNAME} \
              --set injector.enabled=false
 
+# kubectl patch svc app-ingress-ingress-nginx-controller -n ingress -p '{"spec": {"type": "LoadBalancer", "externalIPs":["172.31.71.218"]}}'
+
+# -----------------------------------------------------------------------
+# Set up vault
+# -----------------------------------------------------------------------
+
 VAULT_EXEC="kubectl exec vault-0 --namespace ${NAMESPACE}"
 
-countdown 5
+countdown 10
+
+#wait ping $HOSTNAME -c 1
 
 if ${enable_debug};then set -x;fi
+
 # vault init
 ${VAULT_EXEC} -- vault operator init -key-shares=1 \
                     -key-threshold=1 \
-                    -format=json > init-keys.json
+                    -format=json > keys.json
 
-# kubectl exec vault-0 --namespace cert-manager -- vault operator init -key-shares=1 -key-threshold=1 -format=json > init-keys.json
+# kubectl exec vault-0 --namespace cert-manager -- vault operator init -key-shares=1 -key-threshold=1 -format=json > keys.json
 
 # vault unseal
-VAULT_UNSEAL_KEY=$(cat init-keys.json | jq -r ".unseal_keys_b64[]")
+VAULT_UNSEAL_KEY=$(cat keys.json | jq -r ".unseal_keys_b64[]")
 ${VAULT_EXEC} -- vault operator unseal ${VAULT_UNSEAL_KEY}
 
 # vault login
-VAULT_ROOT_TOKEN=$(cat init-keys.json | jq -r ".root_token")
+VAULT_ROOT_TOKEN=$(cat keys.json | jq -r ".root_token")
 ${VAULT_EXEC} -- vault login ${VAULT_ROOT_TOKEN}
 
 # -----------------------------------------------------------------------
@@ -66,6 +75,7 @@ ${VAULT_EXEC} -- vault write pki/config/urls \
 ${VAULT_EXEC} -- vault write pki/roles/vault \
                 allowed_domains=${DOMAIN} \
                 allow_subdomains=true \
+                require_cn=false \
                 max_ttl=72h
 
 ${VAULT_EXEC} -- sh -c 'vault policy write pki - <<EOF
@@ -77,6 +87,7 @@ EOF'
 # -----------------------------------------------------------------------
 # Configure Kubernetes Authentication
 # -----------------------------------------------------------------------
+
 ${VAULT_EXEC} -- vault auth enable kubernetes
 
 ${VAULT_EXEC} -- sh -c 'vault write auth/kubernetes/config \
@@ -105,7 +116,10 @@ kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/relea
 # install cert-manager
 helm upgrade --install cert-manager jetstack/cert-manager --version ${CERT_MANAGER_VERSION} --namespace ${NAMESPACE} --create-namespace
 
+
+# -----------------------------------------------------------------------
 # Configure an issuer and generate a certificate
+# -----------------------------------------------------------------------
 
 kubectl create serviceaccount ${ISSUER_SA_REF} --namespace ${NAMESPACE}
 
@@ -139,12 +153,16 @@ spec:
           key: token
 EOF
 
+
+# TO DELETE
+
+# kubectl delete clusterissuer vault-issuer
 # helm uninstall vault -n cert-manager
 # helm uninstall cert-manager -n cert-manager
-
-# To fully delete
 # kubectl delete pvc data-vault-0 -n cert-manager 
 # kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.12.1/cert-manager.crds.yaml
+# kubectl delete cert-manager
+
 
 # Look into using Vault as a kubernetes cert manager
 # https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-cert-manager

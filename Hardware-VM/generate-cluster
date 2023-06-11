@@ -1,0 +1,21 @@
+#!/bin/sh
+HOSTNAME='master'
+CIDR='10.244.0.0/16'
+
+# Set hostname
+hostname ${HOSTNAME}
+echo ${HOSTNAME} > /etc/hostname
+
+# Create master node and subnet
+kubeadm init --pod-network-cidr=${CIDR} --node-name=$(hostname) --ignore-preflight-errors=all
+
+# Symlink Kubectl config 
+mkdir ~/.kube > /dev/null 2>&1
+rm /root/.kube/config
+ln -s /etc/kubernetes/admin.conf /root/.kube/config
+
+# Set up CNI (Calico)
+kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+
+# Generate worker node join command
+kubeadm token create --print-join-command >> /mnt/shared/join.sh
