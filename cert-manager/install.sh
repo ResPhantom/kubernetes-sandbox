@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Following setup guide: https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-cert-manager
+# As well as this setup guide: https://developer.hashicorp.com/vault/tutorials/secrets-management/pki-engine
 # REQUIREMENTS:
 #   - kubectl
 #   - jq
@@ -56,7 +57,7 @@ VAULT_ROOT_TOKEN=$(cat keys.json | jq -r ".root_token")
 ${VAULT_EXEC} -- vault login ${VAULT_ROOT_TOKEN}
 
 # -----------------------------------------------------------------------
-# Configure PKI Secrets Engine 
+# Configure PKI Secrets Engine - Root Certificate
 # -----------------------------------------------------------------------
 
 # enable pki
@@ -65,24 +66,65 @@ ${VAULT_EXEC} -- vault secrets tune -max-lease-ttl=8760h pki
 
 # generate certificate
 ${VAULT_EXEC} -- vault write pki/root/generate/internal \
-                common_name=${DOMAIN} \
-                ttl=8760h
+                  common_name=${DOMAIN} \
+                  issuer_name="vault-isser" \
+                  ttl=8760h > vault-isser-ca.crt
 
 ${VAULT_EXEC} -- vault write pki/config/urls \
-                issuing_certificates="http://${HOSTNAME}/v1/pki/ca" \
-                crl_distribution_points="http://${HOSTNAME}/v1/pki/crl"
+                  issuing_certificates="http://${HOSTNAME}/v1/pki/ca" \
+                  crl_distribution_points="http://${HOSTNAME}/v1/pki/crl"
+
+
+# -----------------------------------------------------------------------
+#  Generate PKI role - Root Certificate
+# -----------------------------------------------------------------------
 
 ${VAULT_EXEC} -- vault write pki/roles/vault \
-                allowed_domains=${DOMAIN} \
-                allow_subdomains=true \
-                require_cn=false \
-                max_ttl=72h
+                  allowed_domains=${DOMAIN} \
+                  allow_subdomains=true \
+                  require_cn=false \
+                  max_ttl=87600h
 
 ${VAULT_EXEC} -- sh -c 'vault policy write pki - <<EOF
 path "pki*"                         { capabilities = ["read", "list"] }
 path "pki/sign/vault"               { capabilities = ["create", "update"] }
 path "pki/issue/vault"              { capabilities = ["create"] }
 EOF'
+
+# -----------------------------------------------------------------------
+# Configure PKI Secrets Engine - Intermediate Certificate
+# -----------------------------------------------------------------------
+
+# enable pki - intermediate
+${VAULT_EXEC} -- vault secrets enable -path=pki_int pki
+${VAULT_EXEC} -- vault secrets tune -max-lease-ttl=43800h pki_int
+
+# generate certificate
+${VAULT_EXEC} -- vault write -format=json pki_int/intermediate/generate/internal \
+                  common_name="*.${DOMAIN} Intermediate Authority" \
+                  issuer_name="vault-isser-int" \
+                  | jq -r '.data.csr' > pki_intermediate.csr
+
+# sign intermediate with root certificate key
+${VAULT_EXEC} -- vault write -format=json pki/root/sign-intermediate \
+                  issuer_ref="vault-isser" \
+                  csr=@pki_intermediate.csr \
+                  format=pem_bundle ttl=43800h \
+                  | jq -r '.data.certificate' > intermediate.cert.pem
+
+# add signed certificate back to vault
+${VAULT_EXEC} -- vault write pki_int/intermediate/set-signed certificate=@intermediate.cert.pem
+
+# -----------------------------------------------------------------------
+#  Generate PKI role - Intermediate Certificate
+# -----------------------------------------------------------------------
+
+${VAULT_EXEC} -- vault write pki_int/roles/vault-int \
+                  issuer_ref="vault-isser-int" \
+                  allowed_domains="${DOMAIN}" \
+                  allow_subdomains=true \
+                  require_cn=false \
+                  max_ttl=720h
 
 # -----------------------------------------------------------------------
 # Configure Kubernetes Authentication
@@ -95,10 +137,10 @@ ${VAULT_EXEC} -- sh -c 'vault write auth/kubernetes/config \
 
 
 ${VAULT_EXEC} -- vault write auth/kubernetes/role/issuer \
-                bound_service_account_names=issuer \
-                bound_service_account_namespaces=cert-manager \
-                policies=pki \
-                ttl=20m
+                  bound_service_account_names=issuer \
+                  bound_service_account_namespaces=cert-manager \
+                  policies=pki \
+                  ttl=20m
 set +x
 
 # -----------------------------------------------------------------------
@@ -153,12 +195,21 @@ spec:
           key: token
 EOF
 
-<<<<<<< HEAD
-
 # TO DELETE
 
 # kubectl delete clusterissuer vault-issuer
-=======
+# helm uninstall vault -n cert-manager
+# helm uninstall cert-manager -n cert-manager
+# kubectl delete pvc data-vault-0 -n cert-manager 
+# kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.12.1/cert-manager.crds.yaml
+# kubectl delete ns cert-manager
+
+
+# Look into using Vault as a kubernetes cert manager
+# https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-cert-manager
+# https://cert-manager.io/docs/configuration/vault/
+
+
 kubectl apply --filename -<<EOF
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -174,17 +225,3 @@ spec:
   dnsNames:
   - vault.127.0.0.1.nip.io
 EOF
-
-# DELETE SETUP
-
->>>>>>> 9c48d9dee763659de5be771936d3c5a4f283aa11
-# helm uninstall vault -n cert-manager
-# helm uninstall cert-manager -n cert-manager
-# kubectl delete pvc data-vault-0 -n cert-manager 
-# kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.12.1/cert-manager.crds.yaml
-# kubectl delete cert-manager
-
-
-# Look into using Vault as a kubernetes cert manager
-# https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-cert-manager
-# https://cert-manager.io/docs/configuration/vault/

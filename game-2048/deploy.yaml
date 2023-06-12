@@ -47,6 +47,7 @@ metadata:
   namespace: game-2048
   annotations:
     cert-manager.io/cluster-issuer: "vault-issuer"
+    cert-manager.io/common-name: "game.127.0.0.1.nip.io"
 spec:
   ingressClassName: nginx
   rules:
