@@ -50,6 +50,9 @@ kubectl cp $NAMESPACE/vault-0:/bin/vault ./vault
 curl -SL https://github.com/jqlang/jq/releases/download/jq-1.6/jq-linux32 -o jq
 cp ../certstrap .
 
+# set execution permissions
+chmod 555 vault jq certstrap
+
 if ${enable_debug};then set -x;fi
 
 # vault init
@@ -75,103 +78,121 @@ ${VAULT_EXEC} -- vault login ${VAULT_ROOT_TOKEN}
 # Configure PKI Secrets Engine - Create pki secret
 # -----------------------------------------------------------------------
 
-# enable pki
+# enable pki - root
 ./vault secrets enable pki
-./vault secrets tune -max-lease-ttl=8760h pki
-
-# -----------------------------------------------------------------------
-# Configure PKI Secrets Engine - Root Certificate
-# -----------------------------------------------------------------------
-
-# generate certificate
-./vault write pki/root/generate/internal \
-                  common_name="${DOMAIN} Root Authority" \
-                  issuer_name="vault-issuer" \
-                  ttl=87600h > vault-isser-ca.crt
+./vault secrets tune -max-lease-ttl=87600h pki
 
 ./vault write pki/config/urls \
                   issuing_certificates="http://${HOSTNAME}/v1/pki/ca" \
                   crl_distribution_points="http://${HOSTNAME}/v1/pki/crl"
 
-# CONFIG="
-# [req]
-# distinguished_name=dn
-# [ dn ]
-# [ ext ]
-# basicConstraints=CA:TRUE,pathlen:0
-# "
-# coutry="narnia"
-# owner="vault"
-# url="${DOMAIN}"
-# email="test@test.com"
-# operational_unit="Cloud-DevOps"
+# enable pki - intermediate
+./vault secrets enable -path=pki_int pki
+./vault secrets tune -max-lease-ttl=43800h pki_int
 
-# openssl req -config <(echo "$CONFIG") \
-#             -new \
-#             -newkey rsa:2048 \
-#             -nodes \
-#             -subj "/C=${country}/O=${owner}/OU=${operational_unit}/ST=AP/CN=${url}/emailAddress=${email}" \
-#             -x509 \
-#             -days 365 \
-#             -extensions ext \
-#             -keyout root-key.pem \
-#             -out root-cert.pem
+./vault write pki_int/config/urls \
+                  issuing_certificates="http://${HOSTNAME}/v1/pki/ca" \
+                  crl_distribution_points="http://${HOSTNAME}/v1/pki/crl"
 
-# cat root-key.pem root-cert.pem > pem_bundle
+# enable pki - issuer
+./vault secrets enable -path=pki_iss pki
+./vault secrets tune -max-lease-ttl=8760h pki_iss
 
-# ./vault write pki/config/ca issuer_name="vault-issuer" pem_bundle=@pem_bundle
+./vault write pki_iss/config/urls \
+                  issuing_certificates="http://${HOSTNAME}/v1/pki/ca" \
+                  crl_distribution_points="http://${HOSTNAME}/v1/pki/crl"
 
-# ./vault write pki/config/urls \
-#                   issuing_certificates="http://${HOSTNAME}/v1/pki/ca" \
-#                   crl_distribution_points="http://${HOSTNAME}/v1/pki/crl"
+# # -----------------------------------------------------------------------
+# # Configure PKI Secrets Engine - Root Certificate
+# # -----------------------------------------------------------------------
+
+ORGANIZATION="resphantom"
+COMMON_NAME="resphantom"
+
+# ROOT CERT
+./certstrap --depot-path root init \
+            --organization "${ORGANIZATION}" \
+            --common-name "${COMMON_NAME} Root CA v1" \
+            --expires "10 years" \
+            --curve P-256 \
+            --path-length 2 \
+            --passphrase "secret"
+
+cp ./root/*.crt pki_root_v1.crt
+
+# INTERMEDIATE CERT
+./vault write -format=json \
+        pki_int/intermediate/generate/internal \
+        organization="${ORGANIZATION}" \
+        common_name="${COMMON_NAME} Intermediate CA v1.1" \
+        issuer_name="vault-intermediate" \
+        key_type=ec \
+        key_bits=256 \
+        | ./jq -r '.data.csr' > pki_int_v1.1.csr
+
+./certstrap --depot-path root sign \
+            --CA "${COMMON_NAME} Root CA v1" \
+            --intermediate \
+            --csr pki_int_v1.1.csr \
+            --expires "5 years" \
+            --path-length 1 \
+            --passphrase "secret" \
+            --cert pki_int_v1.1.crt \
+            "${COMMON_NAME} Intermediate CA v1.1"
+
+cp ../pki_int_v1.1.crt .
+            
+./vault write -format=json \
+        pki_int/intermediate/set-signed \
+        issuer_name="vault-intermediate" \
+        certificate=@pki_int_v1.1.crt \
+        > pki_int_v1.1.set-signed.json
+
+# ISSUER CERT
+
+./vault write -format=json \
+        pki_iss/intermediate/generate/internal \
+        organization="${ORGANIZATION}" \
+        common_name="${COMMON_NAME} Issuing CA v1.1.1" \
+        issuer_name="vault-issuer" \
+        key_type=ec \
+        key_bits=256 \
+        | ./jq -r '.data.csr' > pki_iss_v1.1.1.csr
+
+./vault write -format=json \
+        pki_int/root/sign-intermediate \
+        organization="${ORGANIZATION}" \
+        csr=@pki_iss_v1.1.1.csr \
+        ttl=8760h \
+        format=pem \
+        | ./jq -r '.data.certificate' > pki_iss_v1.1.1.crt
+
+# create cert chain
+cat pki_iss_v1.1.1.crt pki_int_v1.1.crt > pki_iss_v1.1.1.chain.crt
+
+./vault write -format=json \
+      pki_iss/intermediate/set-signed \
+      certificate=@pki_iss_v1.1.1.chain.crt \
+      > pki_iss_v1.1.1.set-signed.json
 
 # -----------------------------------------------------------------------
 #  Generate PKI role - Root Certificate
 # -----------------------------------------------------------------------
 
-./vault write pki/roles/vault \
-                  allowed_domains=${DOMAIN} \
-                  allow_subdomains=true \
-                  require_cn=false \
-                  max_ttl=8760h
+./vault write pki_iss/roles/vault \
+      organization="${ORGANIZATION}" \
+      allowed_domains="${DOMAIN}" \
+      allow_subdomains=true \
+      allow_wildcard_certificates=false \
+      require_cn=false \
+      max_ttl=2160h
+
 
 ./vault policy write pki - <<EOF
-path "pki*"                         { capabilities = ["read", "list"] }
-path "pki/sign/vault"               { capabilities = ["create", "update"] }
-path "pki/issue/vault"              { capabilities = ["create"] } 
+path "pki*"                             { capabilities = ["read", "list"] }
+path "pki_iss/sign/vault"               { capabilities = ["create", "update"] }
+path "pki_iss/issue/vault"              { capabilities = ["create"] } 
 EOF
-
-# # -----------------------------------------------------------------------
-# # Configure PKI Secrets Engine - Intermediate Certificate
-# # -----------------------------------------------------------------------
-
-# # generate certificate
-# ./vault write -format=json pki/intermediate/generate/internal \
-#                   common_name="${DOMAIN} Intermediate Authority" \
-#                   issuer_name="vault-issuer-int" \
-#                   ttl=8760h \
-#                   | ./jq -r '.data.csr' > pki_intermediate.csr
-
-# # sign intermediate with root certificate key
-# ./vault write -format=json pki/root/sign-intermediate \
-#                   issuer_ref="vault-issuer" \
-#                   csr=@pki_intermediate.csr \
-#                   format=pem_bundle ttl=43800h \
-#                   | ./jq -r '.data.certificate' > intermediate.cert.pem
-
-# # add signed certificate back to vault
-# ./vault write pki/intermediate/set-signed certificate=@intermediate.cert.pem
-
-# # -----------------------------------------------------------------------
-# #  Generate PKI role - Intermediate Certificate
-# # -----------------------------------------------------------------------
-
-# ./vault write pki/roles/vault-int \
-#                   issuer_ref="vault-isser-int" \
-#                   allowed_domains="${DOMAIN}" \
-#                   allow_subdomains=true \
-#                   require_cn=false \
-#                   max_ttl=720h
 
 # -----------------------------------------------------------------------
 # Configure Kubernetes Authentication
@@ -234,7 +255,7 @@ metadata:
 spec:
   vault:
     server: http://${LOCAL_HOSTNAME}
-    path: pki/sign/vault
+    path: pki_iss/sign/vault
     auth:
       kubernetes:
         mountPath: /v1/auth/kubernetes
@@ -255,10 +276,15 @@ spec:
   issuerRef:
     name: vault-issuer
     kind: ClusterIssuer
-  commonName: "*.127.0.0.1.nip.io"
+  commonName: "vault.127.0.0.1.nip.io"
   dnsNames:
-  - "*.127.0.0.1.nip.io"
+  - "vault.127.0.0.1.nip.io"
 EOF
+
+# ./vault write -format=json \
+#       pki_iss/issue/vault \
+#       common_name="sample.127.0.0.1.nip.io" \
+#       > pki_iss_v1.1.1.sample.crt.json
 
 # TO DELETE
 
@@ -268,6 +294,11 @@ EOF
 # kubectl delete pvc data-vault-0 -n cert-manager 
 # kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.12.1/cert-manager.crds.yaml
 # kubectl delete ns cert-manager
+# rm -rf tmp
+
+
+# export VAULT_SKIP_VERIFY=true
+# export VAULT_ADDR="https://vault.127.0.0.1.nip.io"
 
 
 # Look into using Vault as a kubernetes cert manager
