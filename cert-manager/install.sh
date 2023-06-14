@@ -31,7 +31,9 @@ helm upgrade --install vault hashicorp/vault --namespace ${NAMESPACE} --create-n
              --set server.ingress.tls[0].hosts[0]=${HOSTNAME} \
              --set injector.enabled=false
 
-# kubectl patch svc app-ingress-ingress-nginx-controller -n ingress -p '{"spec": {"type": "LoadBalancer", "externalIPs":["172.31.71.218"]}}'
+kubectl annotate ing vault -n ${NAMESPACE} \
+        --overwrite cert-manager.io/cluster-issuer="vault-issuer" \
+        cert-manager.io/common-name="${HOSTNAME}"
 
 # -----------------------------------------------------------------------
 # Set up vault
@@ -78,13 +80,13 @@ ${VAULT_EXEC} -- vault login ${VAULT_ROOT_TOKEN}
 # Configure PKI Secrets Engine - Create pki secret
 # -----------------------------------------------------------------------
 
-# enable pki - root
-./vault secrets enable pki
-./vault secrets tune -max-lease-ttl=87600h pki
+# # enable pki - root
+# ./vault secrets enable pki
+# ./vault secrets tune -max-lease-ttl=87600h pki
 
-./vault write pki/config/urls \
-                  issuing_certificates="http://${HOSTNAME}/v1/pki/ca" \
-                  crl_distribution_points="http://${HOSTNAME}/v1/pki/crl"
+# ./vault write pki/config/urls \
+#                   issuing_certificates="http://${HOSTNAME}/v1/pki/ca" \
+#                   crl_distribution_points="http://${HOSTNAME}/v1/pki/crl"
 
 # enable pki - intermediate
 ./vault secrets enable -path=pki_int pki
@@ -126,8 +128,7 @@ cp ./root/*.crt pki_root_v1.crt
         organization="${ORGANIZATION}" \
         common_name="${COMMON_NAME} Intermediate CA v1.1" \
         issuer_name="vault-intermediate" \
-        key_type=ec \
-        key_bits=256 \
+        key_bits=4096 \
         | ./jq -r '.data.csr' > pki_int_v1.1.csr
 
 ./certstrap --depot-path root sign \
@@ -155,8 +156,7 @@ cp ../pki_int_v1.1.crt .
         organization="${ORGANIZATION}" \
         common_name="${COMMON_NAME} Issuing CA v1.1.1" \
         issuer_name="vault-issuer" \
-        key_type=ec \
-        key_bits=256 \
+        key_bits=2048 \
         | ./jq -r '.data.csr' > pki_iss_v1.1.1.csr
 
 ./vault write -format=json \
@@ -228,19 +228,25 @@ ${VAULT_EXEC} -- sh -c 'vault write auth/kubernetes/config \
 set +x
 
 # -----------------------------------------------------------------------
+# Create cert folder and move certs
+# -----------------------------------------------------------------------
+
+mkdir ../certs
+mv ./root ../certs
+mv *.crt ../certs
+
+# -----------------------------------------------------------------------
 # git repo: https://github.com/cert-manager/cert-manager/tree/master/deploy/charts/cert-manager
 # helm artifact: https://artifacthub.io/packages/helm/cert-manager/cert-manager
 # -----------------------------------------------------------------------
 
 CERT_MANAGER_VERSION="v1.12.1"
 
-
 # Install cert-manager CRD's
 kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.crds.yaml
 
 # install cert-manager
 helm upgrade --install cert-manager jetstack/cert-manager --version ${CERT_MANAGER_VERSION} --namespace ${NAMESPACE} --create-namespace
-
 
 # -----------------------------------------------------------------------
 # Configure an issuer and generate a certificate
@@ -265,21 +271,21 @@ spec:
           key: token
 EOF
 
-kubectl apply --filename -<<EOF
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: vault-cert
-  namespace: cert-manager
-spec:
-  secretName: vault.127.0.0.1.nip.io
-  issuerRef:
-    name: vault-issuer
-    kind: ClusterIssuer
-  commonName: "vault.127.0.0.1.nip.io"
-  dnsNames:
-  - "vault.127.0.0.1.nip.io"
-EOF
+# kubectl apply --filename -<<EOF
+# apiVersion: cert-manager.io/v1
+# kind: Certificate
+# metadata:
+#   name: vault-cert
+#   namespace: cert-manager
+# spec:
+#   secretName: vault.127.0.0.1.nip.io
+#   issuerRef:
+#     name: vault-issuer
+#     kind: ClusterIssuer
+#   commonName: "vault.127.0.0.1.nip.io"
+#   dnsNames:
+#   - "vault.127.0.0.1.nip.io"
+# EOF
 
 # ./vault write -format=json \
 #       pki_iss/issue/vault \
@@ -295,11 +301,10 @@ EOF
 # kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.12.1/cert-manager.crds.yaml
 # kubectl delete ns cert-manager
 # rm -rf tmp
-
+# rm -rf certs
 
 # export VAULT_SKIP_VERIFY=true
 # export VAULT_ADDR="https://vault.127.0.0.1.nip.io"
-
 
 # Look into using Vault as a kubernetes cert manager
 # https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-cert-manager

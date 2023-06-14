@@ -6,12 +6,16 @@ countdown() {
   countdown="${1:='5'}"
   wait_message="Waiting for "
 
+  echo "${wait_message} $i."
+
   for i in $(seq ${countdown} -1 1)
   do 
-      echo "${wait_message} $i."
-      sleep 0.5
+      echo -e "${replace}${wait_message} $i."
+      sleep 0.2
       echo -e "${replace}${wait_message} $i.."
-      sleep 0.5
+      sleep 0.3
+      echo -e "${replace}${wait_message} $i..."
+      sleep 0.3
   done
 }
 
