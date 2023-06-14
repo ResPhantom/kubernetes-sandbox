@@ -1,0 +1,11 @@
+container:
+  replicas: 5
+  image: alexwhen/docker-2048
+  port: 80
+
+service:
+  port: 80
+
+ingress:
+  clusterissuer: vault-issuer
+  host: game.127.0.0.1.nip.io

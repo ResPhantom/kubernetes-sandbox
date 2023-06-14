@@ -1,20 +1,25 @@
 #!/bin/sh
 
-kubectl apply -f deploy.yaml
+# SETUP WAS DONE FOLLOWING THESE GUIDE(S):
+# https://medium.com/@muhammadbilalparacha/2048-game-deployment-on-kubernetes-2e0a13f93599
 
+# import common functions and variables
+. $(dirname $(readlink -f $0))/../install-lib.sh
 
-# kubectl apply --filename -<<EOF
-# apiVersion: cert-manager.io/v1
-# kind: Certificate
-# metadata:
-#   name: game-cert
-#   namespace: dummy-2048
-# spec:
-#   secretName: game.127.0.0.1.nip.io
-#   issuerRef:
-#     name: vault-issuer
-#     kind: ClusterIssuer
-#   commonName: vault-issuer
-#   dnsNames:
-#   - game.127.0.0.1.nip.io
-# EOF
+NAMESPACE="game-2048"
+HOSTNAME="game.${DOMAIN}"
+
+helm upgrade --install game-2048 ./helm --namespace ${NAMESPACE} --create-namespace \
+             --set ingress.host=${HOSTNAME}
+
+# -----------------------------------------------------------------------
+# NOTES
+# -----------------------------------------------------------------------
+
+# ALTERNATIVE DEPLOY
+
+# kubectl apply -f deploy.yaml
+
+# TO DELETE
+
+# kubectl delete ns game-2048

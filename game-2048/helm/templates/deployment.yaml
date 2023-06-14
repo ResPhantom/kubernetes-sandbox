@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  replicas: {{ .Values.container.replicas }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+    spec:
+      containers:
+        - image: {{ .Values.container.image }}
+          imagePullPolicy: Always
+          name: {{ .Release.Name }}
+          ports:
+            - containerPort: {{ .Values.container.port }}
+              protocol: TCP

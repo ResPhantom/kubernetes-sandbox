@@ -1,20 +1,24 @@
 #!/bin/bash
 
-# Following setup guide: https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-cert-manager
-# As well as this setup guide: https://developer.hashicorp.com/vault/tutorials/secrets-management/pki-engine
-# Another guide: https://sestegra.medium.com/build-an-internal-pki-with-vault-f7179306f18c
+# SETUP WAS DONE FOLLOWING THESE GUIDE(S):
+# https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-cert-manager
+# https://developer.hashicorp.com/vault/tutorials/secrets-management/pki-engine
+# https://sestegra.medium.com/build-an-internal-pki-with-vault-f7179306f18c
+
 # REQUIREMENTS:
 #   - kubectl
+#   - linux (amd64)
 
+# import common functions and variables
 . $(dirname $(readlink -f $0))/../install-lib.sh
+
+export VAULT_SKIP_VERIFY=true
+export VAULT_ADDR="https://${HOSTNAME}"
 
 VAULT_VERSION=""
 NAMESPACE="cert-manager"
 HOSTNAME="vault.${DOMAIN}"
 LOCAL_HOSTNAME="vault.${NAMESPACE}.svc.cluster.local:8200"
-
-export VAULT_SKIP_VERIFY=true
-export VAULT_ADDR="https://${HOSTNAME}"
 
 enable_debug=true
 
@@ -31,6 +35,7 @@ helm upgrade --install vault hashicorp/vault --namespace ${NAMESPACE} --create-n
              --set server.ingress.tls[0].hosts[0]=${HOSTNAME} \
              --set injector.enabled=false
 
+# update ingress annotation to generate kubernetes certificate object
 kubectl annotate ing vault -n ${NAMESPACE} \
         --overwrite cert-manager.io/cluster-issuer="vault-issuer" \
         cert-manager.io/common-name="${HOSTNAME}"
@@ -39,6 +44,7 @@ kubectl annotate ing vault -n ${NAMESPACE} \
 # Set up vault
 # -----------------------------------------------------------------------
 
+# wait for vault to be ready
 countdown 10
 
 # delete tmp folder
@@ -47,7 +53,7 @@ rm -rf ./tmp
 # create tmp folder
 mkdir ./tmp && cd ./tmp
 
-# Get tools
+# get tools
 kubectl cp $NAMESPACE/vault-0:/bin/vault ./vault
 curl -SL https://github.com/jqlang/jq/releases/download/jq-1.6/jq-linux32 -o jq
 cp ../certstrap .
@@ -61,8 +67,6 @@ if ${enable_debug};then set -x;fi
 ./vault operator init -key-shares=1 \
                     -key-threshold=1 \
                     -format=json > keys.json
-
-# kubectl exec vault-0 --namespace cert-manager -- vault operator init -key-shares=1 -key-threshold=1 -format=json > keys.json
 
 # vault remote
 VAULT_EXEC="kubectl exec vault-0 --namespace ${NAMESPACE}"
@@ -80,14 +84,6 @@ ${VAULT_EXEC} -- vault login ${VAULT_ROOT_TOKEN}
 # Configure PKI Secrets Engine - Create pki secret
 # -----------------------------------------------------------------------
 
-# # enable pki - root
-# ./vault secrets enable pki
-# ./vault secrets tune -max-lease-ttl=87600h pki
-
-# ./vault write pki/config/urls \
-#                   issuing_certificates="http://${HOSTNAME}/v1/pki/ca" \
-#                   crl_distribution_points="http://${HOSTNAME}/v1/pki/crl"
-
 # enable pki - intermediate
 ./vault secrets enable -path=pki_int pki
 ./vault secrets tune -max-lease-ttl=43800h pki_int
@@ -104,9 +100,9 @@ ${VAULT_EXEC} -- vault login ${VAULT_ROOT_TOKEN}
                   issuing_certificates="http://${HOSTNAME}/v1/pki/ca" \
                   crl_distribution_points="http://${HOSTNAME}/v1/pki/crl"
 
-# # -----------------------------------------------------------------------
-# # Configure PKI Secrets Engine - Root Certificate
-# # -----------------------------------------------------------------------
+# -----------------------------------------------------------------------
+# Configure PKI Secrets Engine - Create certificates
+# -----------------------------------------------------------------------
 
 ORGANIZATION="resphantom"
 COMMON_NAME="resphantom"
@@ -150,7 +146,6 @@ cp ../pki_int_v1.1.crt .
         > pki_int_v1.1.set-signed.json
 
 # ISSUER CERT
-
 ./vault write -format=json \
         pki_iss/intermediate/generate/internal \
         organization="${ORGANIZATION}" \
@@ -176,7 +171,7 @@ cat pki_iss_v1.1.1.crt pki_int_v1.1.crt > pki_iss_v1.1.1.chain.crt
       > pki_iss_v1.1.1.set-signed.json
 
 # -----------------------------------------------------------------------
-#  Generate PKI role - Root Certificate
+#  Generate PKI role
 # -----------------------------------------------------------------------
 
 ./vault write pki_iss/roles/vault \
@@ -249,7 +244,7 @@ kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/relea
 helm upgrade --install cert-manager jetstack/cert-manager --version ${CERT_MANAGER_VERSION} --namespace ${NAMESPACE} --create-namespace
 
 # -----------------------------------------------------------------------
-# Configure an issuer and generate a certificate
+# Configure an issuer to generate a certificate
 # -----------------------------------------------------------------------
 
 kubectl apply --filename - <<EOF
@@ -270,6 +265,12 @@ spec:
           name: ${ISSUER_SECRET_REF}
           key: token
 EOF
+
+# -----------------------------------------------------------------------
+# NOTES
+# -----------------------------------------------------------------------
+
+# EXAMPLES OF CREATING CERTS BESIDES INGRESS ANNOTATIONS
 
 # kubectl apply --filename -<<EOF
 # apiVersion: cert-manager.io/v1
@@ -292,7 +293,13 @@ EOF
 #       common_name="sample.127.0.0.1.nip.io" \
 #       > pki_iss_v1.1.1.sample.crt.json
 
-# TO DELETE
+
+# TO VIEW CERTIFICATE OBJECT
+
+# kubectl get certificate -n cert-manager
+# kubectl get certificaterequest -n cert-manager
+
+# TO DELETE EVERYTHING
 
 # kubectl delete clusterissuer vault-issuer
 # helm uninstall vault -n cert-manager
@@ -303,11 +310,11 @@ EOF
 # rm -rf tmp
 # rm -rf certs
 
+# TO ACCESS VAULT FROM TERMINAL
+
 # export VAULT_SKIP_VERIFY=true
 # export VAULT_ADDR="https://vault.127.0.0.1.nip.io"
 
 # Look into using Vault as a kubernetes cert manager
 # https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-cert-manager
 # https://cert-manager.io/docs/configuration/vault/
-
-

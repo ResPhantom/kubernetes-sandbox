@@ -4,18 +4,19 @@
 
 . $(dirname $(readlink -f $0))/../install-lib.sh
 
+HOSTNAME="keycloak.${DOMAIN}"
+
 helm upgrade --install keycloak oci://registry-1.docker.io/bitnamicharts/keycloak \
              --namespace keycloak \
              --create-namespace \
              --set ingress.enabled=true \
-             --set ingress.hostname=keycloak.127.0.0.1.nip.io \
+             --set ingress.hostname=${HOSTNAME} \
 
 
 # A manual step is required for Kubernetes integration
 # You will have to update your cluster config on the master nodes
 
 # kubectl get pod kube-apiserver-docker-desktop -n kube-system -o=jsonpath='{.spec.containers[0].command}'
-
 
 
 

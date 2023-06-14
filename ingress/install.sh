@@ -1,13 +1,21 @@
 #!/bin/sh
+
+# -----------------------------------------------------------------------
 # git repo: https://github.com/kubernetes/ingress-nginx
 # helm artifact: https://artifacthub.io/packages/helm/ingress-nginx/ingress-nginx
+# -----------------------------------------------------------------------
 
+# import common functions and variables
 . $(dirname $(readlink -f $0))/../install-lib.sh
 
 helm upgrade --install app-ingress ingress-nginx/ingress-nginx \
              --namespace ingress \
              --create-namespace \
              --set controller.ingressClassResource.default=true
+
+# -----------------------------------------------------------------------
+# NOTES
+# -----------------------------------------------------------------------
 
 # In case your ingress service external IP is in a <pending> state:
 # Run the following command for Linux: 
