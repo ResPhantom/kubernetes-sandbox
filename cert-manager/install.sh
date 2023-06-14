@@ -12,7 +12,155 @@
 # import common functions and variables
 . $(dirname $(readlink -f $0))/../install-lib.sh
 
-VAULT_VERSION=""
+setup_vault() {
+  # vault init
+  ./vault operator init -key-shares=1 \
+                      -key-threshold=1 \
+                      -format=json > keys.json
+
+  # vault remote
+  VAULT_EXEC="kubectl exec vault-0 --namespace ${NAMESPACE}"
+
+  # vault unseal
+  VAULT_UNSEAL_KEY=$(cat keys.json | ./jq -r ".unseal_keys_b64[]")
+  ./vault operator unseal ${VAULT_UNSEAL_KEY}
+
+  # vault login
+  VAULT_ROOT_TOKEN=$(cat keys.json | ./jq -r ".root_token")
+  ./vault login ${VAULT_ROOT_TOKEN}
+  ${VAULT_EXEC} -- vault login ${VAULT_ROOT_TOKEN}
+}
+
+enable_pki_engine() {
+  # enable pki - intermediate
+  ./vault secrets enable -path=pki_int pki
+  ./vault secrets tune -max-lease-ttl=43800h pki_int
+
+  ./vault write pki_int/config/urls \
+                    issuing_certificates="http://${HOSTNAME}/v1/pki/ca" \
+                    crl_distribution_points="http://${HOSTNAME}/v1/pki/crl"
+
+  # enable pki - issuer
+  ./vault secrets enable -path=pki_iss pki
+  ./vault secrets tune -max-lease-ttl=8760h pki_iss
+
+  ./vault write pki_iss/config/urls \
+                    issuing_certificates="http://${HOSTNAME}/v1/pki/ca" \
+                    crl_distribution_points="http://${HOSTNAME}/v1/pki/crl"
+}
+
+generate_certs() {
+  # ROOT CERT
+  ./certstrap --depot-path root init \
+              --organization "${ORGANIZATION}" \
+              --common-name "${COMMON_NAME} Root CA v1" \
+              --expires "10 years" \
+              --curve P-256 \
+              --path-length 2 \
+              --passphrase "secret"
+
+  cp ./root/*.crt pki_root_v1.crt
+
+  # INTERMEDIATE CERT
+  ./vault write -format=json \
+          pki_int/intermediate/generate/internal \
+          organization="${ORGANIZATION}" \
+          common_name="${COMMON_NAME} Intermediate CA v1.1" \
+          issuer_name="vault-intermediate" \
+          key_bits=4096 \
+          | ./jq -r '.data.csr' > pki_int_v1.1.csr
+
+  ./certstrap --depot-path root sign \
+              --CA "${COMMON_NAME} Root CA v1" \
+              --intermediate \
+              --csr pki_int_v1.1.csr \
+              --expires "5 years" \
+              --path-length 1 \
+              --passphrase "secret" \
+              --cert pki_int_v1.1.crt \
+              "${COMMON_NAME} Intermediate CA v1.1"
+
+  cp ../pki_int_v1.1.crt .
+              
+  ./vault write -format=json \
+          pki_int/intermediate/set-signed \
+          issuer_name="vault-intermediate" \
+          certificate=@pki_int_v1.1.crt \
+          > pki_int_v1.1.set-signed.json
+
+  # ISSUER CERT
+  ./vault write -format=json \
+          pki_iss/intermediate/generate/internal \
+          organization="${ORGANIZATION}" \
+          common_name="${COMMON_NAME} Issuing CA v1.1.1" \
+          issuer_name="vault-issuer" \
+          key_bits=2048 \
+          | ./jq -r '.data.csr' > pki_iss_v1.1.1.csr
+
+  ./vault write -format=json \
+          pki_int/root/sign-intermediate \
+          organization="${ORGANIZATION}" \
+          csr=@pki_iss_v1.1.1.csr \
+          ttl=8760h \
+          format=pem \
+          | ./jq -r '.data.certificate' > pki_iss_v1.1.1.crt
+
+  # create cert chain
+  cat pki_iss_v1.1.1.crt pki_int_v1.1.crt > pki_iss_v1.1.1.chain.crt
+
+  ./vault write -format=json \
+        pki_iss/intermediate/set-signed \
+        certificate=@pki_iss_v1.1.1.chain.crt \
+        > pki_iss_v1.1.1.set-signed.json
+}
+
+create_pki_role() {
+  ./vault write pki_iss/roles/vault \
+        organization="${ORGANIZATION}" \
+        allowed_domains="${DOMAIN}" \
+        allow_subdomains=true \
+        allow_wildcard_certificates=false \
+        require_cn=false \
+        max_ttl=2160h
+
+
+  ./vault policy write pki - <<EOF
+path "pki*"                             { capabilities = ["read", "list"] }
+path "pki_iss/sign/vault"               { capabilities = ["create", "update"] }
+path "pki_iss/issue/vault"              { capabilities = ["create"] } 
+EOF
+
+}
+
+configure_k8_auth() {
+  kubectl create serviceaccount ${ISSUER_SA_REF} --namespace ${NAMESPACE}
+
+  kubectl apply --filename - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ${ISSUER_SECRET_REF}
+  namespace: ${NAMESPACE}
+  annotations:
+    kubernetes.io/service-account.name: ${ISSUER_SA_REF}
+type: kubernetes.io/service-account-token
+EOF
+
+  ./vault auth enable kubernetes
+
+  ${VAULT_EXEC} -- sh -c 'vault write auth/kubernetes/config \
+                  token_reviewer_jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+                  kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+                  kubernetes_host="https://${KUBERNETES_PORT_443_TCP_ADDR}:443"'
+
+  ./vault write auth/kubernetes/role/issuer \
+                    bound_service_account_names=${ISSUER_SA_REF} \
+                    bound_service_account_namespaces=${NAMESPACE} \
+                    policies=pki \
+                    ttl=20m
+
+}
+
 NAMESPACE="cert-manager"
 HOSTNAME="vault.${DOMAIN}"
 LOCAL_HOSTNAME="vault.${NAMESPACE}.svc.cluster.local:8200"
@@ -20,7 +168,7 @@ LOCAL_HOSTNAME="vault.${NAMESPACE}.svc.cluster.local:8200"
 export VAULT_SKIP_VERIFY=true
 export VAULT_ADDR="https://${HOSTNAME}"
 
-enable_debug=true
+enable_debug=false
 
 # -----------------------------------------------------------------------
 # git repo: https://github.com/hashicorp/vault-helm/blob/main/values.yaml
@@ -60,134 +208,64 @@ cp ../certstrap .
 
 # set execution permissions
 chmod 555 vault jq certstrap
+echo ""
+echo "-----------------------------------------------------------------------"
+echo "SETTING UP ENVIRONMENT AND MAKING CERTS"
+echo "-----------------------------------------------------------------------"
 
-if ${enable_debug};then set -x;fi
+if ${enable_debug}
+then 
+  set -x
+else
+  echo ""
+fi
 
-# vault init
-./vault operator init -key-shares=1 \
-                    -key-threshold=1 \
-                    -format=json > keys.json
-
-# vault remote
-VAULT_EXEC="kubectl exec vault-0 --namespace ${NAMESPACE}"
-
-# vault unseal
-VAULT_UNSEAL_KEY=$(cat keys.json | ./jq -r ".unseal_keys_b64[]")
-./vault operator unseal ${VAULT_UNSEAL_KEY}
-
-# vault login
-VAULT_ROOT_TOKEN=$(cat keys.json | ./jq -r ".root_token")
-./vault login ${VAULT_ROOT_TOKEN}
-${VAULT_EXEC} -- vault login ${VAULT_ROOT_TOKEN}
-
-# -----------------------------------------------------------------------
-# Configure PKI Secrets Engine - Create pki secret
-# -----------------------------------------------------------------------
-
-# enable pki - intermediate
-./vault secrets enable -path=pki_int pki
-./vault secrets tune -max-lease-ttl=43800h pki_int
-
-./vault write pki_int/config/urls \
-                  issuing_certificates="http://${HOSTNAME}/v1/pki/ca" \
-                  crl_distribution_points="http://${HOSTNAME}/v1/pki/crl"
-
-# enable pki - issuer
-./vault secrets enable -path=pki_iss pki
-./vault secrets tune -max-lease-ttl=8760h pki_iss
-
-./vault write pki_iss/config/urls \
-                  issuing_certificates="http://${HOSTNAME}/v1/pki/ca" \
-                  crl_distribution_points="http://${HOSTNAME}/v1/pki/crl"
+if ${enable_debug}
+then
+  setup_vault
+else
+  setup_vault > /dev/null 2>&1
+  progress_bar 0 20
+fi
 
 # -----------------------------------------------------------------------
-# Configure PKI Secrets Engine - Create certificates
+# Configure PKI Secrets Engine - Enable pki secret engine
+# -----------------------------------------------------------------------
+
+if ${enable_debug}
+then
+  enable_pki_engine
+else
+  enable_pki_engine > /dev/null 2>&1
+  progress_bar 20 40
+fi
+
+# -----------------------------------------------------------------------
+# Configure PKI Secrets Engine - Generate certificates
 # -----------------------------------------------------------------------
 
 ORGANIZATION="resphantom"
 COMMON_NAME="resphantom"
 
-# ROOT CERT
-./certstrap --depot-path root init \
-            --organization "${ORGANIZATION}" \
-            --common-name "${COMMON_NAME} Root CA v1" \
-            --expires "10 years" \
-            --curve P-256 \
-            --path-length 2 \
-            --passphrase "secret"
-
-cp ./root/*.crt pki_root_v1.crt
-
-# INTERMEDIATE CERT
-./vault write -format=json \
-        pki_int/intermediate/generate/internal \
-        organization="${ORGANIZATION}" \
-        common_name="${COMMON_NAME} Intermediate CA v1.1" \
-        issuer_name="vault-intermediate" \
-        key_bits=4096 \
-        | ./jq -r '.data.csr' > pki_int_v1.1.csr
-
-./certstrap --depot-path root sign \
-            --CA "${COMMON_NAME} Root CA v1" \
-            --intermediate \
-            --csr pki_int_v1.1.csr \
-            --expires "5 years" \
-            --path-length 1 \
-            --passphrase "secret" \
-            --cert pki_int_v1.1.crt \
-            "${COMMON_NAME} Intermediate CA v1.1"
-
-cp ../pki_int_v1.1.crt .
-            
-./vault write -format=json \
-        pki_int/intermediate/set-signed \
-        issuer_name="vault-intermediate" \
-        certificate=@pki_int_v1.1.crt \
-        > pki_int_v1.1.set-signed.json
-
-# ISSUER CERT
-./vault write -format=json \
-        pki_iss/intermediate/generate/internal \
-        organization="${ORGANIZATION}" \
-        common_name="${COMMON_NAME} Issuing CA v1.1.1" \
-        issuer_name="vault-issuer" \
-        key_bits=2048 \
-        | ./jq -r '.data.csr' > pki_iss_v1.1.1.csr
-
-./vault write -format=json \
-        pki_int/root/sign-intermediate \
-        organization="${ORGANIZATION}" \
-        csr=@pki_iss_v1.1.1.csr \
-        ttl=8760h \
-        format=pem \
-        | ./jq -r '.data.certificate' > pki_iss_v1.1.1.crt
-
-# create cert chain
-cat pki_iss_v1.1.1.crt pki_int_v1.1.crt > pki_iss_v1.1.1.chain.crt
-
-./vault write -format=json \
-      pki_iss/intermediate/set-signed \
-      certificate=@pki_iss_v1.1.1.chain.crt \
-      > pki_iss_v1.1.1.set-signed.json
+if ${enable_debug}
+then
+  generate_certs
+else
+  generate_certs > /dev/null 2>&1
+  progress_bar 40 60
+fi
 
 # -----------------------------------------------------------------------
-#  Generate PKI role
+#  Create PKI role
 # -----------------------------------------------------------------------
 
-./vault write pki_iss/roles/vault \
-      organization="${ORGANIZATION}" \
-      allowed_domains="${DOMAIN}" \
-      allow_subdomains=true \
-      allow_wildcard_certificates=false \
-      require_cn=false \
-      max_ttl=2160h
-
-
-./vault policy write pki - <<EOF
-path "pki*"                             { capabilities = ["read", "list"] }
-path "pki_iss/sign/vault"               { capabilities = ["create", "update"] }
-path "pki_iss/issue/vault"              { capabilities = ["create"] } 
-EOF
+if ${enable_debug}
+then
+  create_pki_role
+else
+  create_pki_role > /dev/null 2>&1
+  progress_bar 60 80
+fi
 
 # -----------------------------------------------------------------------
 # Configure Kubernetes Authentication
@@ -195,31 +273,14 @@ EOF
 ISSUER_SA_REF="issuer"
 ISSUER_SECRET_REF="issuer-token"
 
-kubectl create serviceaccount ${ISSUER_SA_REF} --namespace ${NAMESPACE}
+if ${enable_debug}
+then
+  configure_k8_auth
+else
+  configure_k8_auth > /dev/null 2>&1
+  progress_bar 80 100
+fi
 
-kubectl apply --filename - <<EOF
-apiVersion: v1
-kind: Secret
-metadata:
-  name: ${ISSUER_SECRET_REF}
-  namespace: ${NAMESPACE}
-  annotations:
-    kubernetes.io/service-account.name: ${ISSUER_SA_REF}
-type: kubernetes.io/service-account-token
-EOF
-
-./vault auth enable kubernetes
-
-${VAULT_EXEC} -- sh -c 'vault write auth/kubernetes/config \
-                token_reviewer_jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
-                kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
-                kubernetes_host="https://${KUBERNETES_PORT_443_TCP_ADDR}:443"'
-
-./vault write auth/kubernetes/role/issuer \
-                  bound_service_account_names=${ISSUER_SA_REF} \
-                  bound_service_account_namespaces=${NAMESPACE} \
-                  policies=pki \
-                  ttl=20m
 set +x
 
 # -----------------------------------------------------------------------

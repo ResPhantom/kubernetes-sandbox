@@ -22,6 +22,28 @@ countdown() {
   done
 }
 
+progress_instance() {
+  percentage=$1
+  calculation=$((50 - (${percentage} % 2)))
+  replace="\033[1A\033[K"
+  bar=""
+
+  for i in $(seq ${percentage} -1 1); do
+    bar="${bar}."
+  done
+  
+  echo -e "${replace}${percentage}%${bar}"
+}
+
+progress_bar() {
+  percentage_begin=$1
+  percentage_end=$2
+  for i in $(seq ${percentage_begin} 1 ${percentage_end}); do
+    progress_instance $i
+    sleep 0.02
+  done
+}
+
 # Below you can add more repo commands. The following command '$() > /dev/null 2>&1' is just to silence annoying output
 add_helm_repos() {
   helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
