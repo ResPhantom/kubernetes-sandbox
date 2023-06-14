@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# SETUP WAS DONE FOLLOWING THESE GUIDE(S):
+# SETUP WAS DONE FOLLOWING THESE GUIDES:
 # https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-cert-manager
 # https://developer.hashicorp.com/vault/tutorials/secrets-management/pki-engine
 # https://sestegra.medium.com/build-an-internal-pki-with-vault-f7179306f18c
@@ -12,13 +12,13 @@
 # import common functions and variables
 . $(dirname $(readlink -f $0))/../install-lib.sh
 
-export VAULT_SKIP_VERIFY=true
-export VAULT_ADDR="https://${HOSTNAME}"
-
 VAULT_VERSION=""
 NAMESPACE="cert-manager"
 HOSTNAME="vault.${DOMAIN}"
 LOCAL_HOSTNAME="vault.${NAMESPACE}.svc.cluster.local:8200"
+
+export VAULT_SKIP_VERIFY=true
+export VAULT_ADDR="https://${HOSTNAME}"
 
 enable_debug=true
 
