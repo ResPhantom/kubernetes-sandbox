@@ -48,6 +48,8 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: "vault-issuer"
     cert-manager.io/common-name: "game.127.0.0.1.nip.io"
+    cert-manager.io/duration: 2190h
+    cert-manager.io/renewBefore: 360h 
 spec:
   ingressClassName: nginx
   rules:
