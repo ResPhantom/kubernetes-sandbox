@@ -208,6 +208,7 @@ cp ../certstrap .
 
 # set execution permissions
 chmod 555 vault jq certstrap
+
 echo ""
 echo "-----------------------------------------------------------------------"
 echo "SETTING UP ENVIRONMENT AND MAKING CERTS"
@@ -270,6 +271,7 @@ fi
 # -----------------------------------------------------------------------
 # Configure Kubernetes Authentication
 # -----------------------------------------------------------------------
+
 ISSUER_SA_REF="issuer"
 ISSUER_SECRET_REF="issuer-token"
 
