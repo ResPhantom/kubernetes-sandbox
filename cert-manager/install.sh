@@ -10,165 +10,46 @@
 #   - linux (amd64)
 
 # import common functions and variables
-. $(dirname $(readlink -f $0))/../install-lib.sh
+. ../global_lib.sh
+. ./lib/generate_certs.sh
+. ./lib/install_tools.sh
+. ./lib/setup_vault_pki.sh
 
-setup_vault() {
-  # vault init
-  ./vault operator init -key-shares=1 \
-                      -key-threshold=1 \
-                      -format=json > keys.json
-
-  # vault remote
-  VAULT_EXEC="kubectl exec vault-0 --namespace ${NAMESPACE}"
-
-  # vault unseal
-  VAULT_UNSEAL_KEY=$(cat keys.json | ./jq -r ".unseal_keys_b64[]")
-  ./vault operator unseal ${VAULT_UNSEAL_KEY}
-
-  # vault login
-  VAULT_ROOT_TOKEN=$(cat keys.json | ./jq -r ".root_token")
-  ./vault login ${VAULT_ROOT_TOKEN}
-  ${VAULT_EXEC} -- vault login ${VAULT_ROOT_TOKEN}
-}
-
-enable_pki_engine() {
-  # enable pki - intermediate
-  ./vault secrets enable -path=pki_int pki
-  ./vault secrets tune -max-lease-ttl=43800h pki_int
-
-  ./vault write pki_int/config/urls \
-                    issuing_certificates="http://${HOSTNAME}/v1/pki/ca" \
-                    crl_distribution_points="http://${HOSTNAME}/v1/pki/crl"
-
-  # enable pki - issuer
-  ./vault secrets enable -path=pki_iss pki
-  ./vault secrets tune -max-lease-ttl=8760h pki_iss
-
-  ./vault write pki_iss/config/urls \
-                    issuing_certificates="http://${HOSTNAME}/v1/pki/ca" \
-                    crl_distribution_points="http://${HOSTNAME}/v1/pki/crl"
-}
-
-generate_certs() {
-  # ROOT CERT
-  ./certstrap --depot-path root init \
-              --organization "${ORGANIZATION}" \
-              --common-name "${COMMON_NAME} Root CA v1" \
-              --expires "10 years" \
-              --curve P-256 \
-              --path-length 2 \
-              --passphrase "secret"
-
-  cp ./root/*.crt pki_root_v1.crt
-
-  # INTERMEDIATE CERT
-  ./vault write -format=json \
-          pki_int/intermediate/generate/internal \
-          organization="${ORGANIZATION}" \
-          common_name="${COMMON_NAME} Intermediate CA v1.1" \
-          issuer_name="vault-intermediate" \
-          key_bits=4096 \
-          | ./jq -r '.data.csr' > pki_int_v1.1.csr
-
-  ./certstrap --depot-path root sign \
-              --CA "${COMMON_NAME} Root CA v1" \
-              --intermediate \
-              --csr pki_int_v1.1.csr \
-              --expires "5 years" \
-              --path-length 1 \
-              --passphrase "secret" \
-              --cert pki_int_v1.1.crt \
-              "${COMMON_NAME} Intermediate CA v1.1"
-
-  cp ../pki_int_v1.1.crt .
-              
-  ./vault write -format=json \
-          pki_int/intermediate/set-signed \
-          issuer_name="vault-intermediate" \
-          certificate=@pki_int_v1.1.crt \
-          > pki_int_v1.1.set-signed.json
-
-  # ISSUER CERT
-  ./vault write -format=json \
-          pki_iss/intermediate/generate/internal \
-          organization="${ORGANIZATION}" \
-          common_name="${COMMON_NAME} Issuing CA v1.1.1" \
-          issuer_name="vault-issuer" \
-          key_bits=2048 \
-          | ./jq -r '.data.csr' > pki_iss_v1.1.1.csr
-
-  ./vault write -format=json \
-          pki_int/root/sign-intermediate \
-          organization="${ORGANIZATION}" \
-          csr=@pki_iss_v1.1.1.csr \
-          ttl=8760h \
-          format=pem \
-          | ./jq -r '.data.certificate' > pki_iss_v1.1.1.crt
-
-  # create cert chain
-  cat pki_iss_v1.1.1.crt pki_int_v1.1.crt > pki_iss_v1.1.1.chain.crt
-
-  ./vault write -format=json \
-        pki_iss/intermediate/set-signed \
-        certificate=@pki_iss_v1.1.1.chain.crt \
-        > pki_iss_v1.1.1.set-signed.json
-}
-
-create_pki_role() {
-  ./vault write pki_iss/roles/vault \
-        organization="${ORGANIZATION}" \
-        allowed_domains="${DOMAIN}" \
-        allow_subdomains=true \
-        allow_wildcard_certificates=false \
-        require_cn=false \
-        max_ttl=2160h
-
-
-  ./vault policy write pki - <<EOF
-path "pki*"                             { capabilities = ["read", "list"] }
-path "pki_iss/sign/vault"               { capabilities = ["create", "update"] }
-path "pki_iss/issue/vault"              { capabilities = ["create"] } 
-EOF
-
-}
-
-configure_k8_auth() {
-  kubectl create serviceaccount ${ISSUER_SA_REF} --namespace ${NAMESPACE}
-
-  kubectl apply --filename - <<EOF
-apiVersion: v1
-kind: Secret
-metadata:
-  name: ${ISSUER_SECRET_REF}
-  namespace: ${NAMESPACE}
-  annotations:
-    kubernetes.io/service-account.name: ${ISSUER_SA_REF}
-type: kubernetes.io/service-account-token
-EOF
-
-  ./vault auth enable kubernetes
-
-  ${VAULT_EXEC} -- sh -c 'vault write auth/kubernetes/config \
-                  token_reviewer_jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
-                  kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
-                  kubernetes_host="https://${KUBERNETES_PORT_443_TCP_ADDR}:443"'
-
-  ./vault write auth/kubernetes/role/issuer \
-                    bound_service_account_names=${ISSUER_SA_REF} \
-                    bound_service_account_namespaces=${NAMESPACE} \
-                    policies=pki \
-                    ttl=20m
-
-}
-
+# global
+DEBUG=true
 NAMESPACE="cert-manager"
+
+# cert-manager variables
+CERT_MANAGER_VERSION="v1.12.1"
+
+# vault variables
 HOSTNAME="vault.${DOMAIN}"
 LOCAL_HOSTNAME="vault.${NAMESPACE}.svc.cluster.local:8200"
 
 export VAULT_SKIP_VERIFY=true
 export VAULT_ADDR="https://${HOSTNAME}"
 
-enable_debug=false
+# certs variables
+ORGANIZATION="resphantom"
+COMMON_NAME="resphantom"
+
+setup_vault() {
+  # vault init
+  vault operator init -key-shares=1 \
+                      -key-threshold=1 \
+                      -format=json > keys.json
+
+  # vault unseal
+  VAULT_UNSEAL_KEY=$(cat keys.json | jq -r ".unseal_keys_b64[]")
+  vault operator unseal ${VAULT_UNSEAL_KEY}
+
+  # vault login
+  VAULT_ROOT_TOKEN=$(cat keys.json | jq -r ".root_token")
+  # local login
+  vault login ${VAULT_ROOT_TOKEN}
+  # remote login
+  kubectl exec vault-0 --namespace ${NAMESPACE} -- vault login ${VAULT_ROOT_TOKEN}
+}
 
 # -----------------------------------------------------------------------
 # git repo: https://github.com/hashicorp/vault-helm/blob/main/values.yaml
@@ -201,104 +82,74 @@ rm -rf ./tmp
 # create tmp folder
 mkdir ./tmp && cd ./tmp
 
-# get tools
-kubectl cp $NAMESPACE/vault-0:/bin/vault ./vault
-curl -SL https://github.com/jqlang/jq/releases/download/jq-1.6/jq-linux32 -o jq
-cp ../certstrap .
-
-# set execution permissions
-chmod 555 vault jq certstrap
+get_tools
 
 echo ""
 echo "-----------------------------------------------------------------------"
 echo "SETTING UP ENVIRONMENT AND MAKING CERTS"
 echo "-----------------------------------------------------------------------"
+echo ""
 
-if ${enable_debug}
-then 
+# get verbose logs
+if ${DEBUG}
+then
   set -x
-else
-  echo ""
 fi
 
-if ${enable_debug}
+hide setup_vault --progress 0 20
+
+# -----------------------------------------------------------------------
+# Copy over cert inputs if any
+# -----------------------------------------------------------------------
+
+if [ -d ../input ]
 then
-  setup_vault
-else
-  setup_vault > /dev/null 2>&1
-  progress_bar 0 20
+  cp -r ../input/* .
 fi
 
 # -----------------------------------------------------------------------
 # Configure PKI Secrets Engine - Enable pki secret engine
 # -----------------------------------------------------------------------
 
-if ${enable_debug}
-then
-  enable_pki_engine
-else
-  enable_pki_engine > /dev/null 2>&1
-  progress_bar 20 40
-fi
+hide enable_pki_engine --progress 20 40
 
 # -----------------------------------------------------------------------
 # Configure PKI Secrets Engine - Generate certificates
 # -----------------------------------------------------------------------
 
-ORGANIZATION="resphantom"
-COMMON_NAME="resphantom"
+hide generate_certs --progress 40 60
 
-if ${enable_debug}
-then
-  generate_certs
-else
-  generate_certs > /dev/null 2>&1
-  progress_bar 40 60
-fi
 
 # -----------------------------------------------------------------------
 #  Create PKI role
 # -----------------------------------------------------------------------
 
-if ${enable_debug}
-then
-  create_pki_role
-else
-  create_pki_role > /dev/null 2>&1
-  progress_bar 60 80
-fi
+hide create_pki_role --progress 60 80
 
 # -----------------------------------------------------------------------
 # Configure Kubernetes Authentication
 # -----------------------------------------------------------------------
 
-ISSUER_SA_REF="issuer"
-ISSUER_SECRET_REF="issuer-token"
+hide configure_k8_auth --progress 80 100
 
-if ${enable_debug}
-then
-  configure_k8_auth
-else
-  configure_k8_auth > /dev/null 2>&1
-  progress_bar 80 100
-fi
+# -----------------------------------------------------------------------
+# Create output folder and move all sensitive data to output folder
+# -----------------------------------------------------------------------
 
+# remove verbose logs
 set +x
 
-# -----------------------------------------------------------------------
-# Create cert folder and move certs
-# -----------------------------------------------------------------------
+mkdir output
+mv keys.json ./output/
+mv ./root/ ./output/
+mv *.crt ./output
 
-mkdir ../certs
-mv ./root ../certs
-mv *.crt ../certs
+mv ./output/ ../
 
 # -----------------------------------------------------------------------
 # git repo: https://github.com/cert-manager/cert-manager/tree/master/deploy/charts/cert-manager
 # helm artifact: https://artifacthub.io/packages/helm/cert-manager/cert-manager
 # -----------------------------------------------------------------------
-
-CERT_MANAGER_VERSION="v1.12.1"
 
 # Install cert-manager CRD's
 kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.crds.yaml
@@ -351,11 +202,10 @@ EOF
 #   - "vault.127.0.0.1.nip.io"
 # EOF
 
-# ./vault write -format=json \
+# vault write -format=json \
 #       pki_iss/issue/vault \
 #       common_name="sample.127.0.0.1.nip.io" \
 #       > pki_iss_v1.1.1.sample.crt.json
-
 
 # TO VIEW CERTIFICATE OBJECT
 
@@ -371,7 +221,7 @@ EOF
 # kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.12.1/cert-manager.crds.yaml
 # kubectl delete ns cert-manager
 # rm -rf tmp
-# rm -rf certs
+# rm -rf output
 
 # TO ACCESS VAULT FROM TERMINAL
 
