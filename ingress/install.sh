@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------
 
 # import common functions and variables
-. $(dirname $(readlink -f $0))/../install-lib.sh
+. ../global_lib.sh
 
 helm upgrade --install app-ingress ingress-nginx/ingress-nginx \
              --namespace ingress \

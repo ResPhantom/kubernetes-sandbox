@@ -1,0 +1,8 @@
+container:
+  replicas: 6
+  resources:
+    cpu: 50m
+    memory: 50Mi
+
+ingress:
+  host: dummy.127.0.0.1.nip.io

@@ -2,6 +2,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ .Release.Name }}
+  annotations:
+    certmanager.k8s.io/disable-auto-restart: "true"
 spec:
   selector:
     matchLabels:
@@ -16,6 +18,13 @@ spec:
         - image: {{ .Values.container.image }}
           imagePullPolicy: Always
           name: {{ .Release.Name }}
+          resources:
+            limits:
+              cpu: {{ .Values.container.resources.cpu }}
+              memory: {{ .Values.container.resources.memory }}
+            requests:
+              cpu: {{ .Values.container.resources.cpu }}
+              memory: {{ .Values.container.resources.memory }}
           ports:
             - containerPort: {{ .Values.container.port }}
               protocol: TCP

@@ -4,13 +4,13 @@
 # https://medium.com/@muhammadbilalparacha/2048-game-deployment-on-kubernetes-2e0a13f93599
 
 # import common functions and variables
-. $(dirname $(readlink -f $0))/../install-lib.sh
+. ../global_lib.sh
 
-NAMESPACE="game-2048"
-HOSTNAME="game.${DOMAIN}"
+NAMESPACE="dummy-2048"
+HOSTNAME="dummy.${DOMAIN}"
 
-helm upgrade --install game-2048 ./helm --namespace ${NAMESPACE} --create-namespace \
-             --set ingress.host=${HOSTNAME}
+helm upgrade --install dummy-2048 ./helm --namespace ${NAMESPACE} --create-namespace \
+             -f values-dev.yaml
 
 # -----------------------------------------------------------------------
 # NOTES
@@ -22,4 +22,4 @@ helm upgrade --install game-2048 ./helm --namespace ${NAMESPACE} --create-namesp
 
 # TO DELETE
 
-# kubectl delete ns game-2048
+# kubectl delete ns dummy-2048

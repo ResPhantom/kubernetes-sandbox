@@ -30,8 +30,8 @@ export VAULT_SKIP_VERIFY=true
 export VAULT_ADDR="https://${HOSTNAME}"
 
 # certs variables
-ORGANIZATION="resphantom"
-COMMON_NAME="resphantom"
+ORGANIZATION="Wackyman"
+COMMON_NAME="Wackyman"
 
 setup_vault() {
   # vault init
@@ -74,7 +74,8 @@ kubectl annotate ing vault -n ${NAMESPACE} \
 # -----------------------------------------------------------------------
 
 # wait for vault to be ready
-countdown 10
+countdown 15
+echo ""
 
 # delete tmp folder
 rm -rf ./tmp
@@ -88,7 +89,6 @@ echo ""
 echo "-----------------------------------------------------------------------"
 echo "SETTING UP ENVIRONMENT AND MAKING CERTS"
 echo "-----------------------------------------------------------------------"
-echo ""
 
 # get verbose logs
 if ${DEBUG}
@@ -119,7 +119,6 @@ hide enable_pki_engine --progress 20 40
 
 hide generate_certs --progress 40 60
 
-
 # -----------------------------------------------------------------------
 #  Create PKI role
 # -----------------------------------------------------------------------
@@ -138,13 +137,14 @@ hide configure_k8_auth --progress 80 100
 
 # remove verbose logs
 set +x
+echo ""
 
 mkdir output
 mv keys.json ./output/
 mv ./root/ ./output/
 mv *.crt ./output
 
-mv ./output/ ../
+cp -r ./output/ ../
 
 # -----------------------------------------------------------------------
 # git repo: https://github.com/cert-manager/cert-manager/tree/master/deploy/charts/cert-manager
@@ -181,6 +181,12 @@ spec:
 EOF
 
 # -----------------------------------------------------------------------
+# Clean up
+# -----------------------------------------------------------------------
+
+cd .. && rm -rf tmp
+
+# -----------------------------------------------------------------------
 # NOTES
 # -----------------------------------------------------------------------
 
@@ -202,10 +208,17 @@ EOF
 #   - "vault.127.0.0.1.nip.io"
 # EOF
 
-# vault write -format=json \
+# TO ACCESS VAULT FROM TERMINAL
+
+# export VAULT_SKIP_VERIFY=true
+# export VAULT_ADDR="https://vault.127.0.0.1.nip.io"
+
+# EXAMPLE OF MANUAL CERTIFICATE GENERATION
+
+# ./vault write -format=json \
 #       pki_iss/issue/vault \
 #       common_name="sample.127.0.0.1.nip.io" \
-#       > pki_iss_v1.1.1.sample.crt.json
+#       | ./jq -r '.data.certificate' > sample.crt
 
 # TO VIEW CERTIFICATE OBJECT
 
@@ -222,11 +235,6 @@ EOF
 # kubectl delete ns cert-manager
 # rm -rf tmp
 # rm -rf output
-
-# TO ACCESS VAULT FROM TERMINAL
-
-# export VAULT_SKIP_VERIFY=true
-# export VAULT_ADDR="https://vault.127.0.0.1.nip.io"
 
 # Look into using Vault as a kubernetes cert manager
 # https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-cert-manager

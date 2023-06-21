@@ -1,13 +1,15 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: game-2048
+  name: dummy-2048
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: game-2048
-  namespace: game-2048
+  name: dummy-2048
+  namespace: dummy-2048
+  annotations:
+    certmanager.k8s.io/disable-auto-restart: "true"
 spec:
   selector:
     matchLabels:
@@ -22,6 +24,13 @@ spec:
         - image: alexwhen/docker-2048
           imagePullPolicy: Always
           name: "2048"
+          resources:
+            limits:
+              cpu: 100m
+              memory: 100Mi
+            requests:
+              cpu: 100m
+              memory: 100Mi
           ports:
             - containerPort: 80
               protocol: TCP
@@ -29,8 +38,8 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: game-2048
-  namespace: game-2048
+  name: dummy-2048
+  namespace: dummy-2048
   labels:
     app: servicelabel
 spec:
@@ -43,39 +52,39 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: game-2048
-  namespace: game-2048
+  name: dummy-2048
+  namespace: dummy-2048
   annotations:
     cert-manager.io/cluster-issuer: "vault-issuer"
-    cert-manager.io/common-name: "game.127.0.0.1.nip.io"  
+    cert-manager.io/common-name: "dummy.127.0.0.1.nip.io"  
 spec:
   ingressClassName: nginx
   rules:
-  - host: game.127.0.0.1.nip.io
+  - host: dummy.127.0.0.1.nip.io
     http:
       paths:
       - backend:
           service:
-            name: game-2048
+            name: dummy-2048
             port:
               number: 80
         path: /
         pathType: Prefix
   tls:
   - hosts:
-    - game.127.0.0.1.nip.io
-    secretName: game.127.0.0.1.nip.io
+    - dummy.127.0.0.1.nip.io
+    secretName: dummy.127.0.0.1.nip.io
 # ---
 # apiVersion: cert-manager.io/v1
 # kind: Certificate
 # metadata:
 #   name: vault-cert
-#   namespace: game-2048
+#   namespace: dummy-2048
 # spec:
-#   secretName: game.127.0.0.1.nip.io
+#   secretName: dummy.127.0.0.1.nip.io
 #   issuerRef:
 #     name: vault-issuer
 #     kind: ClusterIssuer
-#   commonName: "game.127.0.0.1.nip.io"
+#   commonName: "dummy.127.0.0.1.nip.io"
 #   dnsNames:
-#   - "game.127.0.0.1.nip.io"
+#   - "dummy.127.0.0.1.nip.io"

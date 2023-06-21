@@ -2,7 +2,7 @@
 # git repo: https://github.com/bitnami/charts/tree/main/bitnami/keycloak
 # helm artifact: https://artifacthub.io/packages/helm/bitnami/keycloak
 
-. $(dirname $(readlink -f $0))/../install-lib.sh
+. ../global_lib.sh
 
 HOSTNAME="keycloak.${DOMAIN}"
 

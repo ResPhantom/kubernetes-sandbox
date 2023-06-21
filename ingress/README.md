@@ -38,7 +38,7 @@ service/app-ingress-ingress-nginx-controller             LoadBalancer   10.103.7
 ## Solutions
 
 - Restart the cluster
-- Stop the other application using the localhost IP (127.0.0.1)
+- Stop the other application using that particular external IP
 - Restart the Host/PC
 
 Run this command again:

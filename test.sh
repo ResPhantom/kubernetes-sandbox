@@ -1,8 +1,9 @@
 #!/bin/sh
-. $(dirname $(readlink -f $0))/install-lib.sh
+. ./global_lib.sh
 
 # wait ping fart
 
+DEBUG=true
 
 # export VAULT_SKIP_VERIFY=true
 # export VAULT_ADDR="https://vault.127.0.0.1.nip.io"
@@ -32,14 +33,23 @@
 #   done
 # }
 
-bruh=true
-HIDE=``
+# bruh=true
+# HIDE=``
 
-cat test > /dev/null 2>&1
-echo []
+# cat test > /dev/null 2>&1
+# echo []
 
+# progress_instance 80
 
-countdown 10
+hide "sleep 2;echo p" --progress 0 20
+hide "sleep 1;echo e" --progress 20 40
+hide "sleep 5;echo n" --progress 40 60
+hide "sleep 2;echo i" --progress 60 80
+hide "sleep 1;echo s" --progress 80 100
+echo ""
 
-if ${bruh};then progress_bar 20 40;fi
+# countdown 10
 
+# if ${bruh};then ;fi
+
+# countdown 10

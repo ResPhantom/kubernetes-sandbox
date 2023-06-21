@@ -2,7 +2,7 @@
 # git repo: https://github.com/kubernetes/dashboard
 # helm artifact: https://artifacthub.io/packages/helm/k8s-dashboard/kubernetes-dashboard
 
-. $(dirname $(readlink -f $0))/../install-lib.sh
+. ../global_lib.sh
 
 helm upgrade --install kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard \
              --namespace kubernetes-dashboard \
