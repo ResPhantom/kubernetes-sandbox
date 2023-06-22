@@ -1,9 +1,10 @@
 #!/bin/sh
-. ./global_lib.sh
+
+# . ./global_lib.sh
 
 # wait ping fart
 
-DEBUG=true
+# DEBUG=true
 
 # export VAULT_SKIP_VERIFY=true
 # export VAULT_ADDR="https://vault.127.0.0.1.nip.io"
@@ -41,15 +42,24 @@ DEBUG=true
 
 # progress_instance 80
 
-hide "sleep 2;echo p" --progress 0 20
-hide "sleep 1;echo e" --progress 20 40
-hide "sleep 5;echo n" --progress 40 60
-hide "sleep 2;echo i" --progress 60 80
-hide "sleep 1;echo s" --progress 80 100
-echo ""
+# hide "sleep 2;echo p" --progress 0 20
+# hide "sleep 1;echo e" --progress 20 40
+# hide "sleep 5;echo n" --progress 40 60
+# hide "sleep 2;echo i" --progress 60 80
+# hide "sleep 1;echo s" --progress 80 100
+# echo ""
 
 # countdown 10
 
 # if ${bruh};then ;fi
 
 # countdown 10
+ls $0
+
+../bin/certstrap --depot-path root init \
+          --organization "${ORGANIZATION}" \
+          --common-name "${COMMON_NAME} Root CA ${current_time}" \
+          --expires "10 years" \
+          --curve P-256 \
+          --path-length 2 \
+          --passphrase "secret"

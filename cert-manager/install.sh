@@ -10,10 +10,13 @@
 #   - linux (amd64)
 
 # import common functions and variables
-. ../global_lib.sh
-. ./lib/generate_certs.sh
-. ./lib/install_tools.sh
-. ./lib/setup_vault_pki.sh
+
+EXE_DIR=$(dirname $(readlink -f $0))
+
+. ${EXE_DIR}../global_lib.sh
+. ${EXE_DIR}/lib/generate_certs.sh
+. ${EXE_DIR}/lib/install_tools.sh
+. ${EXE_DIR}/lib/setup_vault_pki.sh
 
 # global
 DEBUG=true

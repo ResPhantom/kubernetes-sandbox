@@ -54,7 +54,9 @@ progress_bar() {
 hide() {
   if ${DEBUG}
   then
+    set -x
     $1
+    set +x
   else
     $1 > /dev/null 2>&1
     shift

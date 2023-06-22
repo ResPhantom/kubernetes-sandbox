@@ -10,6 +10,6 @@ service:
   port: 80
 
 ingress:
-  clusterissuer: vault-issuer
+  clusterissuer: vault-public-issuer
   host: game.127.0.0.1.nip.io
 
