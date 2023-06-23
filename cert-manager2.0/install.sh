@@ -114,16 +114,21 @@ kubectl annotate ing vault -n ${NAMESPACE} \
 
 # wait for vault to be ready
 countdown 15
+
+echo ""
+echo "-----------------------------------------------------------------------"
+echo "UNSEAL AND LOGIN TO VAULT"
+echo "-----------------------------------------------------------------------"
 echo ""
 
 # Download missing tools into bin folder
-get_tools
+hide get_tools --progress 0 30
 
 # init, unseal and login to vault
-hide setup_vault --progress 0 50
+hide setup_vault --progress 30 70
 
 # configure kubernetes authentication
-hide configure_k8_auth --progress 50 100
+hide configure_k8_auth --progress 70 100
 
 # -----------------------------------------------------------------------
 # INSTALL CERT-MANAGER
@@ -212,8 +217,19 @@ cp ./pub_pki_int.csr ./output/public/
 
 mv ./output ..
 
+
+echo ""
+echo "-----------------------------------------------------------------------"
+echo "INFO"
+echo "-----------------------------------------------------------------------"
+echo ""
+echo "If you are using a public authority, go to the './outputs/public/' folder and sign the csr with a public authority."
+echo "After that copy the resulting certificate to ./outputs/public/ and make sure it is named 'pub_pki_int.crt'"
+echo "Then you can run './generate_public_certs.sh'."
+echo ""
 echo ""
 echo "vault url: https://${HOSTNAME}"
+
 
 # -----------------------------------------------------------------------
 # NOTES
@@ -241,6 +257,10 @@ echo "vault url: https://${HOSTNAME}"
 
 # export VAULT_SKIP_VERIFY=true
 # export VAULT_ADDR="https://vault.127.0.0.1.nip.io"
+
+# SET TEMP PATH FOR EXECUTABLES
+
+# PATH=${PATH}:$(pwd)/tmp/bin
 
 # EXAMPLE OF MANUAL CERTIFICATE GENERATION
 

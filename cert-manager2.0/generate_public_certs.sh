@@ -72,3 +72,10 @@ mv -f *.crt ../output/public/
 # when the certmanager takes too long to start the initial certificate request times out
 # deleting it would force an automatic recreate
 kubectl delete certificate ${HOSTNAME} --namespace ${NAMESPACE} > /dev/null 2>&1
+
+echo ""
+echo "-----------------------------------------------------------------------"
+echo "INFO"
+echo "-----------------------------------------------------------------------"
+echo ""
+echo "vault url: https://${HOSTNAME}"

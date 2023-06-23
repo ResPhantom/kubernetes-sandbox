@@ -5,6 +5,8 @@ COMMON_NAME="Public Athority"
 
 CURRENT_TIME=$(date +%Y)
 
+rm -rf root
+
 ../bin/certstrap --depot-path root init \
               --organization "${ORGANIZATION}" \
               --common-name "${COMMON_NAME} Root CA ${CURRENT_TIME}" \
